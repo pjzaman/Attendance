@@ -2,18 +2,18 @@ rules_version = '2';
 
 // Apon Attendance — Firestore security rules.
 //
-// Goals for this iteration:
-//   1. Block anonymous access (any signed-in Firebase Auth user can
-//      read/write the working set; nobody else can).
-//   2. Per-user user_prefs/{uid} — a user can only touch their own.
-//   3. Bridge service account writes via the Admin SDK and bypasses
-//      these rules entirely. This file only constrains Flutter
-//      clients, the JS console, and any other firebase-rules-bound
-//      caller.
+// The Flutter app uses firedart for Firestore (cloud_firestore is
+// broken on Windows desktop). firedart and firebase_auth are
+// independent SDKs, so AuthService dual-signs-in to keep both
+// authenticated; that's what makes `request.auth != null` work
+// for legitimate clients.
 //
-// Production hardening (per-role rules — e.g. only HR Lead role can
-// upsert payslips) lives in a later phase, after the ACL Roles model
-// gets wired into custom claims on the auth token.
+// Caveat: Google sign-in users authenticate firebase_auth only,
+// not firedart, so Firestore reads from a Google-only session
+// will fail under these rules. Apon's deployment uses
+// email/password — fine. Multi-tenant SaaS layer (which gets
+// its own custom-token issuance via Cloud Functions) will close
+// this gap.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -24,30 +24,26 @@ service cloud.firestore {
                          && request.auth.uid == uid;
     }
 
-    // Bridge-owned heartbeat. Clients may read; clients may also
-    // write so the install/test path works without a service account
-    // — bridge process always uses Admin SDK and bypasses anyway.
+    // Bridge heartbeat. Bridge writes via service account (bypasses
+    // rules); clients only need to read.
     match /bridges/{bridgeId} {
       allow read, write: if request.auth != null;
     }
 
-    // Punch records. The Python bridge writes via service account
-    // (bypasses these rules). Clients only need to read; we leave
-    // write open for the one-shot mirror tool until that lives
-    // server-side.
+    // Punch records. Bridge writes via service account; clients
+    // read for the live attendance dashboard.
     match /punches/{id} {
       allow read, write: if request.auth != null;
     }
 
-    // Command queue. Clients enqueue commands (create); the bridge
-    // service account updates them with results. Updates are also
-    // allowed for clients so a UI cancel-button could mark them.
+    // Command queue. Clients enqueue (create), bridge updates with
+    // results.
     match /bridge_commands/{id} {
       allow read, create, update, delete: if request.auth != null;
     }
 
-    // Default: any signed-in user has full access. Replace this
-    // with per-collection role checks once roles are in place.
+    // Default: any signed-in user has full access. Tighten with
+    // per-collection role checks when ACL custom claims are wired.
     match /{document=**} {
       allow read, write: if request.auth != null;
     }
