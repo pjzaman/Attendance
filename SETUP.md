@@ -1,115 +1,249 @@
 # Apon Attendance — Setup
 
-Standalone Windows desktop Flutter app that talks directly to the office
-ZKTeco UFace800 (`192.168.0.150:4370`), pulls users + punches, derives
-check-in/out from raw timestamps, and stores everything locally in SQLite.
+Three workflows depending on what you're doing:
 
-No Firebase. No ERP integration. No Python runtime required at runtime.
-Designed to be folded into Apon ERP later — schema and derivation rules
-are bit-identical to the existing Python `attendance-service`.
+1. [**Dev laptop**](#1-dev-laptop) — make code changes, hot-reload locally
+2. [**Ship the Flutter app**](#2-ship-the-flutter-app) to HR/manager laptops
+3. [**Ship the bridge**](#3-ship-the-bridge) to the PC wired to the ZKTeco
+
+Each workflow lists prerequisites and exact commands.
 
 ---
 
-## One-time setup (on the office PC that can reach 192.168.0.150)
+## 1. Dev laptop
 
-Run these in order from a terminal in `C:\Users\Kairi\Documents\Claude\Projects\Attendance Program\`.
+### Prerequisites
 
-### 1. Bootstrap the Flutter project
+- Windows 10/11 with Visual Studio 2022 (Desktop C++ workload — needed by Flutter
+  Windows builds)
+- Flutter SDK 3.4 or newer on `PATH`
+- Python 3.10+ on `PATH` (for the bridge)
+- Firebase CLI (`npm i -g firebase-tools`)
+- A Firebase project (the one this repo points at is `attendance-app-apon`)
 
-```cmd
-flutter create --org com.apon --platforms windows apon_attendance
-cd apon_attendance
-```
+### One-time
 
-### 2. Copy the staged source files in
+```powershell
+git clone https://github.com/pjzaman/Attendance.git
+cd Attendance
 
-The `lib\`, `pubspec.yaml`, `analysis_options.yaml`, `.env`, and
-`assets\` files in this folder (one level up from the `apon_attendance`
-folder you just created) are the actual app code. Copy them in,
-overwriting Flutter's defaults:
-
-```cmd
-xcopy /E /Y "..\lib" ".\lib\"
-copy /Y "..\pubspec.yaml" ".\pubspec.yaml"
-copy /Y "..\analysis_options.yaml" ".\analysis_options.yaml"
-copy /Y "..\.env" ".\.env"
-xcopy /E /Y /I "..\assets" ".\assets"
-```
-
-(Or just drag-and-drop in Explorer — whichever feels less fragile.)
-
-### 3. Pull dependencies
-
-```cmd
+# Pull Flutter deps
 flutter pub get
+
+# (If using your own Firebase project, regenerate firebase_options.dart)
+dart pub global activate flutterfire_cli
+flutterfire configure
 ```
 
-### 4. Run it
+Enable the auth providers you want in the
+[Firebase Console](https://console.firebase.google.com) →
+Authentication → Sign-in method:
 
-```cmd
+- **Email/Password** (required)
+- **Google** (optional; for HR signing in via their Google account)
+
+Create at least one user under Authentication → Users. That's your test login.
+
+Deploy the Firestore security rules:
+
+```powershell
+firebase deploy --only firestore:rules
+```
+
+### Run the Flutter app
+
+```powershell
 flutter run -d windows
 ```
 
-The first run will compile the C++ side of the Windows embedder, which
-takes a few minutes. After that, hot-restart is instant.
+First launch takes a few minutes (CMake compiles the Windows embedder).
+Subsequent runs hot-restart in seconds.
+
+### Run the bridge against a real device
+
+```powershell
+cd bridge
+
+# Create a venv + install deps
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+
+# Configure
+copy .env.example .env
+# Edit .env: set DEVICE_IP to the ZKTeco's LAN address, BRIDGE_ID to
+# anything stable (e.g. "dev-laptop"), and point GOOGLE_APPLICATION_CREDENTIALS
+# at a service-account JSON.
+
+# Service-account JSON: Firebase Console → Project settings →
+# Service accounts → Generate new private key. Save next to .env (or
+# anywhere; .env points at it).
+
+# Run
+python -m bridge.main
+```
+
+You should see logs every ~30s:
+
+```
+2026-05-03 17:42:01 INFO    bridge.main: apon-attendance-bridge starting
+2026-05-03 17:42:01 INFO    bridge.device: device connected: serial=ABC1234567
+2026-05-03 17:42:31 INFO    bridge.main: synced 12 new punch(es); high_water=2847
+```
+
+Check Firestore for `punches/*` and `bridges/<your BRIDGE_ID>` docs ticking.
 
 ---
 
-## What you should see
+## 2. Ship the Flutter app
 
-1. Home screen — big status card showing the device IP and a **Connect**
-   button.
-2. Hit Connect → it opens a TCP socket to `192.168.0.150:4370`, sends
-   `CMD_CONNECT`, and gets back a session ID. Status flips to green.
-3. Hit **Sync** → it disables the device (so nobody scans mid-pull),
-   downloads users + all punches, re-enables, and writes everything to
-   `apon_attendance.db` in your app data folder.
-4. Tabs: **Employees** (raw user list from device), **Punches** (raw scan
-   log, sortable), **Daily** (derived check-in/out summary using the
-   same rules as `derive.py`), **Export** (CSV / XLSX dump for handing
-   to anyone who wants the data).
+The deployable artifact is a zip of the Windows Release folder. HR/manager
+unzip it and double-click the exe — no installer, no admin rights, no
+Python needed.
+
+### On the dev laptop
+
+```powershell
+.\deploy\build_app.ps1
+```
+
+Outputs:
+- `deploy\out\apon-attendance-app\` — unzipped Release folder
+- `deploy\out\apon-attendance-app.zip` — 15 MB, ready to transport
+
+Email or USB the zip.
+
+### On the user's machine
+
+1. Unzip anywhere (Desktop, Documents, wherever)
+2. Double-click `apon_attendance.exe`
+3. Sign in with the Firebase Auth account HR provisioned for them
+4. (Optional) right-click → Pin to Start menu
+
+The whole folder needs to stay together — the exe depends on DLLs alongside
+it. Users can move/rename the folder freely; they just can't extract a
+single file.
+
+> **First-run note:** Windows SmartScreen may warn about an unsigned exe.
+> "More info → Run anyway." A code-signing certificate would remove the
+> warning; deferred until external distribution is needed.
 
 ---
 
-## Where the database lives
+## 3. Ship the bridge
 
-Windows: `%APPDATA%\com.apon\apon_attendance\apon_attendance.db`
+### On the dev laptop
 
-It's a plain SQLite file. Same schema as the Python service's
-`data\zkteco.db` so you can swap them around or query both with the
-same SQL.
+```powershell
+.\deploy\build_bridge.ps1
+```
 
----
+Outputs:
+- `deploy\out\apon-bridge-bundle\apon-bridge.exe` — single self-contained exe
+  (~23 MB, includes Python interpreter + all deps)
+- `deploy\out\apon-bridge-bundle\install\install.ps1` + `uninstall.ps1`
+- `deploy\out\apon-bridge-bundle\.env.example`
+- `deploy\out\apon-bridge-bundle.zip` — same, zipped for transport
 
-## When you want to integrate with Apon ERP
+### On the device-PC (the one wired to the ZKTeco)
 
-The dart-side Firestore writes are intentionally not built yet. The
-hooks are there — `lib\services\sync\firestore_sync.dart` is a stub
-that takes the same `DailySummary` objects the UI shows and would push
-to the `attendance` and `zkteco_punches` collections. Wire it up when
-the ERP is ready; nothing else in the standalone app needs to change.
+1. **Unzip** `apon-bridge-bundle.zip` somewhere temporary (e.g. Desktop)
+2. **Configure**: rename `.env.example` → `.env`, edit:
+   - `DEVICE_IP` — ZKTeco's LAN address
+   - `BRIDGE_ID` — stable name (e.g. `front-gate`)
+   - `DEVICE_ID` — logical device name (e.g. `uface800-front`)
+   - `GOOGLE_APPLICATION_CREDENTIALS` — path to the service-account JSON
+     (recommend keeping it `./firebase-sa.json` and dropping the file
+     next to the exe; the install script copies it into Program Files)
+3. **Drop the service-account JSON** next to `apon-bridge.exe`. Get it
+   from Firebase Console → Project settings → Service accounts →
+   Generate new private key. Save as `firebase-sa.json`.
+4. **Right-click** `install\install.ps1` → **Run as Administrator**.
+
+The installer:
+- Validates the bundle has all 3 required files
+- Copies them to `C:\Program Files\ApponBridge\`
+- Registers a Windows scheduled task (`ApponBridge`) that:
+  - Runs as `SYSTEM`
+  - Auto-starts at boot
+  - Restarts every 1 minute on failure (up to 999 retries)
+  - Survives user logouts
+- Starts the bridge immediately
+
+To verify: open the Firebase Console, look at `bridges/<your BRIDGE_ID>` —
+the `updatedAt` field should tick every 30s.
+
+### Updating an existing install
+
+Build a fresh bundle and run `install.ps1` again. It overwrites
+`apon-bridge.exe` and `firebase-sa.json` but **preserves your `.env`** so
+operator config doesn't get reset.
+
+### Uninstalling
+
+```powershell
+# Right-click → Run as Administrator
+.\install\uninstall.ps1
+
+# Add -PurgeState to also wipe the high-water-mark sqlite
+.\install\uninstall.ps1 -PurgeState
+```
 
 ---
 
 ## Troubleshooting
 
-**"Connect failed: SocketException"** — you're not on the office LAN, or
-the device is off. Sanity check:
-```cmd
-ping 192.168.0.150
-```
+### Flutter app
 
-**"Connect failed: bad checksum"** — there's a bug in the protocol
-implementation. Drop the failing packet hex into the chat and we'll
-fix `lib\services\zkteco\zk_protocol.dart` together.
+**Login screen accepts credentials but immediately bounces back to login** —
+your Firebase Auth user exists but Firestore rules are rejecting the read.
+Run `firebase deploy --only firestore:rules` to push the latest rules.
 
-**Empty users / empty punches but device clearly has data** — the device
-might be using comm key ≠ 0. Edit `.env`:
-```
-ZK_COMM_KEY=12345
-```
-and the AUTH handshake will run before commands.
+**Empty dashboard after login** — Firestore is empty. Either let the seeders
+run (they fire automatically on first launch with admin rights) or seed via
+the Firebase Console.
 
-**App data folder not where you expect** — `path_provider` returns the
-real path on first run; check the debug console. You can override it
-in `lib\config.dart` with `kOverrideDbPath`.
+**SmartScreen blocks the exe on first run** — "More info → Run anyway."
+
+### Bridge
+
+**`Missing required env var: GOOGLE_APPLICATION_CREDENTIALS`** — `.env` is
+not next to `apon-bridge.exe`, or the file path it points at doesn't
+exist. The error message includes the expected `.env` location.
+
+**Device unreachable on startup** — bridge logs `device connect failed,
+retrying in 60s` indefinitely. Sanity check from a terminal on the same
+PC: `Test-NetConnection -ComputerName 192.168.0.150 -Port 4370`.
+
+**`bridges/{id}` doc isn't updating in Firestore** — check Task Scheduler:
+*Win + R → `taskschd.msc` → Task Scheduler Library → ApponBridge*. Look
+at "Last run result" (`0x0` = ok). If non-zero, click "History" tab for
+the actual exception.
+
+**Bridge runs but nothing pushes to `punches/`** — check the high-water-
+mark in `C:\Program Files\ApponBridge\bridge_state.sqlite`. If it's
+already at the device's max attendance UID, the device just doesn't
+have new records.
+
+### Cloud
+
+**Rules deploy fails with `MISSING_REQUIRED_API`** — Firebase will
+auto-enable the API on first deploy. Wait 30s and retry.
+
+**`firebase deploy` says "no project active"** — `cd` to the repo root
+and confirm `.firebaserc` is present.
+
+---
+
+## Project layout cross-reference
+
+For where to look when extending or debugging:
+
+| Job | File |
+|---|---|
+| Add a new Firestore collection | `lib/services/firestore/firestore_repo.dart` + subscription in `lib/providers/app_state.dart` |
+| Add a new screen | `lib/screens/<x>_screen.dart`, register in `lib/screens/home_screen.dart` |
+| Add a bridge command | dispatcher in `bridge/bridge/command_executor.py` |
+| Tighten Firestore rules per role | `firestore.rules`, then `firebase deploy --only firestore:rules` |
+| Change first-launch defaults | corresponding `lib/services/*_seed.dart` |
+| Theme tweaks | `lib/shared/app_theme.dart` |
