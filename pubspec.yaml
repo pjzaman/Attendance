@@ -1,0 +1,58 @@
+name: apon_attendance
+description: Standalone Windows attendance app for the Apon UFace800.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management — same as Apon ERP
+  provider: ^6.1.2
+
+  # Firebase: cloud backend for multi-user access. The Python bridge
+  # writes punches/health to Firestore; the Flutter client reads from
+  # Firestore directly. cloud_firestore's Windows support uses a C++
+  # SDK that has linker-compatibility issues, so the Firestore client
+  # used in the data layer is `firedart` (pure-Dart REST/gRPC client)
+  # — added in Phase B. firebase_auth on Windows works fine.
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+
+  # Google sign-in. Only invoked on Android / iOS / macOS / Web — the
+  # button is hidden on Windows / Linux (no OAuth provider support).
+  google_sign_in: ^6.2.1
+
+  # Pure-Dart Firestore client. Used instead of cloud_firestore so we
+  # don't pull the Firebase C++ SDK on Windows (which has linker
+  # compatibility issues). Works on every platform Flutter targets.
+  firedart: 0.9.8
+
+  # Path helpers (used by export filename builders).
+  path: ^1.9.0
+
+  # Env var loading
+  flutter_dotenv: ^5.1.0
+
+  # Excel / CSV export
+  excel: ^4.0.6
+  csv: ^6.0.0
+
+  # File save dialog (cross-desktop)
+  file_picker: ^8.1.2
+
+  # Date helpers
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env

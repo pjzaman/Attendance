@@ -1,0 +1,18 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "attendance-app-apon",
+          "configurations": {
+            "android": "1:675127426094:android:f5fee0ec02621977e5f3bf",
+            "windows": "1:675127426094:web:b62c3e8bcfe08225e5f3bf"
+          }
+        }
+      }
+    }
+  }
+}

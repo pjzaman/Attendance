@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(extract-text \"C:/Users/Kairi/Documents/Claude/Projects/Attendance Program/Attendance_Program_Modification_Plan.docx\")",
+      "Bash(pandoc \"C:/Users/Kairi/Documents/Claude/Projects/Attendance Program/Attendance_Program_Modification_Plan.docx\" -t markdown)",
+      "Bash(python \"C:/Users/Kairi/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/5025de3f-4587-41ca-8853-2aaf3c8df5f0/04d4bea0-3307-4cee-a42a-25770b7cd026/skills/docx/scripts/office/unpack.py\" \"C:/Users/Kairi/Documents/Claude/Projects/Attendance Program/Attendance_Program_Modification_Plan.docx\" \"C:/Users/Kairi/Documents/Claude/Projects/Attendance Program/_plan_unpacked/\")"
+    ]
+  }
+}

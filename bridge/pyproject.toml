@@ -1,0 +1,25 @@
+[project]
+name = "apon-attendance-bridge"
+version = "0.1.0"
+description = "ZKTeco UFace800 → Firestore bridge for the Apon Attendance app"
+requires-python = ">=3.10"
+dependencies = [
+    "pyzk>=0.9",
+    "firebase-admin>=6.5.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+apon-bridge = "bridge.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bridge*"]

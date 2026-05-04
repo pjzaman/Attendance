@@ -1,0 +1,70 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ─── Secrets ─────────────────────────────────────────────────
+# Never commit these. Use the matching .env.example or document
+# how to obtain the JSON in README.md instead.
+.env
+**/.env
+*firebase-sa.json
+*service-account*.json
+*-credentials.json
+
+# ─── Python bridge build artifacts ───────────────────────────
+bridge/.venv/
+bridge/build/
+bridge/dist/
+bridge/*.egg-info/
+bridge/__pycache__/
+bridge/**/__pycache__/
+bridge/*.sqlite
+bridge_state.sqlite
+
+# ─── Deploy bundles ──────────────────────────────────────────
+deploy/out/
+
+# ─── IDE noise ───────────────────────────────────────────────
+.run/

@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// Apon Attendance — Firestore security rules.
+//
+// Goals for this iteration:
+//   1. Block anonymous access (any signed-in Firebase Auth user can
+//      read/write the working set; nobody else can).
+//   2. Per-user user_prefs/{uid} — a user can only touch their own.
+//   3. Bridge service account writes via the Admin SDK and bypasses
+//      these rules entirely. This file only constrains Flutter
+//      clients, the JS console, and any other firebase-rules-bound
+//      caller.
+//
+// Production hardening (per-role rules — e.g. only HR Lead role can
+// upsert payslips) lives in a later phase, after the ACL Roles model
+// gets wired into custom claims on the auth token.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Per-user prefs (starred reports, hidden columns, etc.).
+    match /user_prefs/{uid} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid;
+    }
+
+    // Bridge-owned heartbeat. Clients may read; clients may also
+    // write so the install/test path works without a service account
+    // — bridge process always uses Admin SDK and bypasses anyway.
+    match /bridges/{bridgeId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Punch records. The Python bridge writes via service account
+    // (bypasses these rules). Clients only need to read; we leave
+    // write open for the one-shot mirror tool until that lives
+    // server-side.
+    match /punches/{id} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Command queue. Clients enqueue commands (create); the bridge
+    // service account updates them with results. Updates are also
+    // allowed for clients so a UI cancel-button could mark them.
+    match /bridge_commands/{id} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    // Default: any signed-in user has full access. Replace this
+    // with per-collection role checks once roles are in place.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
