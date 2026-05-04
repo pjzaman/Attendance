@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firedart/firedart.dart' as fd;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -43,6 +44,21 @@ class _AuthGateState extends State<AuthGate> {
         if (user == null) {
           _bootstrapFuture = null;
           _currentUserId = null;
+          return LoginScreen(auth: _auth);
+        }
+        // Session-mismatch recovery: firebase_auth restored a session
+        // from native persistence, but firedart's persistent token
+        // isn't there (first run after upgrade, or Google sign-in
+        // path that doesn't dual-sign-in). Force the user back to
+        // login so the next sign-in primes both SDKs.
+        if (!fd.FirebaseAuth.instance.isSignedIn) {
+          _bootstrapFuture = null;
+          _currentUserId = null;
+          // Schedule the firebase_auth sign-out for the next frame so
+          // we don't mutate stream state from inside a builder.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _auth.signOut();
+          });
           return LoginScreen(auth: _auth);
         }
         if (_currentUserId != user.uid) {

@@ -5,10 +5,12 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firedart/firedart.dart' as fd;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
 import 'config.dart';
 import 'firebase_options.dart';
+import 'services/auth/persistent_token_store.dart';
 import 'services/firestore/firestore_repo.dart';
 
 Future<void> main() async {
@@ -18,11 +20,12 @@ Future<void> main() async {
   final options = DefaultFirebaseOptions.currentPlatform;
   await Firebase.initializeApp(options: options);
 
-  // firedart needs its OWN auth state to authorize Firestore
-  // requests. We initialize it with the same API key as firebase_auth
-  // and AuthService dual-signs-in on every login so both stay in
-  // sync. See services/auth/auth_service.dart.
-  fd.FirebaseAuth.initialize(options.apiKey, fd.VolatileStore());
+  // Persistent token store for firedart so its session survives app
+  // restarts. Without it, firedart appears signed-out on every
+  // relaunch even though firebase_auth restored its session, and
+  // Firestore reads fail with SignedOutException.
+  final prefs = await SharedPreferences.getInstance();
+  fd.FirebaseAuth.initialize(options.apiKey, PersistentTokenStore(prefs));
   FirestoreRepo.initialize(options.projectId);
 
   runApp(const AponAttendanceApp());

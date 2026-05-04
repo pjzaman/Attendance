@@ -34,6 +34,10 @@ dependencies:
   # Path helpers (used by export filename builders).
   path: ^1.9.0
 
+  # Persistent firedart auth tokens (so firedart's session survives
+  # app restarts the same way firebase_auth's does).
+  shared_preferences: ^2.3.0
+
   # Env var loading
   flutter_dotenv: ^5.1.0
 
