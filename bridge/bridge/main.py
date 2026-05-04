@@ -81,18 +81,57 @@ def main() -> int:
     last_sync_at: Optional[datetime] = None
     last_error: Optional[str] = None
 
-    while not stop.stop:
-        target = remote.fetch()
-        if target is None:
-            # Device record exists but the IP is still the placeholder.
-            # Idle, heartbeat, retry — HR will set the IP from the app.
+    # Cost-control: throttle heartbeats and config fetches.
+    # - Heartbeats: only on state change OR after `heartbeat_interval_s`
+    #   of steady-state. The Flutter UI flips to "Stale" after 2 min;
+    #   defaulting to 5 min keeps the panel honest while writing 1/10
+    #   the docs of the per-iteration approach.
+    # - Config fetch: cached for 60s. Operator IP changes still
+    #   propagate within 1 min instead of 30 s.
+    last_hb_at: float = 0.0
+    last_hb_status: Optional[str] = None
+    last_hb_connected: Optional[bool] = None
+    last_cfg_fetch_at: float = 0.0
+    cached_cfg: Optional[DeviceTarget] = None
+    CFG_CACHE_S = 60.0
+
+    def hb(*, status, device_id, device_connected, last_error):
+        nonlocal last_hb_at, last_hb_status, last_hb_connected
+        now = time.monotonic()
+        changed = (status != last_hb_status
+                   or device_connected != last_hb_connected)
+        if changed or (now - last_hb_at) >= cfg.heartbeat_interval_s:
             _safe_heartbeat(
                 heartbeat,
                 bridge_id=cfg.bridge_id,
-                device_id=cfg.bridge_id,
-                status="awaiting_config",
-                device_connected=False,
+                device_id=device_id,
+                status=status,
+                device_connected=device_connected,
                 last_sync_at=last_sync_at,
+                last_error=last_error,
+            )
+            last_hb_at = now
+            last_hb_status = status
+            last_hb_connected = device_connected
+
+    def get_target(force: bool = False) -> Optional[DeviceTarget]:
+        nonlocal last_cfg_fetch_at, cached_cfg
+        now = time.monotonic()
+        if force or cached_cfg is None or (now - last_cfg_fetch_at) >= CFG_CACHE_S:
+            cached_cfg = remote.fetch()
+            last_cfg_fetch_at = now
+        return cached_cfg
+
+    while not stop.stop:
+        target = get_target(force=True)
+        if target is None:
+            # Device record exists but the IP is still the placeholder.
+            # Idle, heartbeat (throttled), retry — HR will set the IP
+            # from the app.
+            hb(
+                status="awaiting_config",
+                device_id=cfg.bridge_id,
+                device_connected=False,
                 last_error="Set the device IP from the Flutter app "
                 "under Settings → Integrations → Devices.",
             )
@@ -116,13 +155,11 @@ def main() -> int:
             device, writer, state, cfg.bridge_id, target.device_id,
         )
 
-        _safe_heartbeat(
-            heartbeat,
-            bridge_id=cfg.bridge_id,
-            device_id=target.device_id,
+        # State-transition heartbeat: connect → online.
+        hb(
             status="online",
+            device_id=target.device_id,
             device_connected=True,
-            last_sync_at=last_sync_at,
             last_error=None,
         )
 
@@ -133,8 +170,9 @@ def main() -> int:
 
         while not stop.stop:
             try:
-                # Pick up config changes between iterations.
-                latest = remote.fetch()
+                # Pick up config changes (cached for 60s — operator
+                # changes still propagate within ~1 min).
+                latest = get_target()
                 if latest is None or latest != connected_target:
                     log.info(
                         "device config changed (or was cleared); "
@@ -173,26 +211,24 @@ def main() -> int:
 
                 last_sync_at = datetime.now(timezone.utc)
                 last_error = None
-                remote.stamp_last_sync(target.device_id)
-                _safe_heartbeat(
-                    heartbeat,
-                    bridge_id=cfg.bridge_id,
-                    device_id=target.device_id,
+                # Heartbeat is throttled — most iterations are no-ops.
+                # The bridge's lastSyncAt is on the heartbeat doc, so
+                # we don't separately stamp the device record (saves
+                # 1 write per cycle).
+                hb(
                     status="online",
+                    device_id=target.device_id,
                     device_connected=True,
-                    last_sync_at=last_sync_at,
                     last_error=None,
                 )
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 log.exception("sync iteration failed: %s", e)
-                _safe_heartbeat(
-                    heartbeat,
-                    bridge_id=cfg.bridge_id,
-                    device_id=target.device_id,
+                # State change (online → degraded) writes immediately.
+                hb(
                     status="degraded",
+                    device_id=target.device_id,
                     device_connected=False,
-                    last_sync_at=last_sync_at,
                     last_error=last_error,
                 )
                 device.disconnect()
@@ -205,6 +241,8 @@ def main() -> int:
 
     cmd_listener.stop()
 
+    # Final state-transition heartbeat — write directly, bypassing
+    # throttle, because we're about to exit.
     _safe_heartbeat(
         heartbeat,
         bridge_id=cfg.bridge_id,
