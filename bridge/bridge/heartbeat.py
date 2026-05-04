@@ -32,11 +32,30 @@ class HeartbeatPublisher:
         last_sync_at: Optional[datetime],
         last_error: Optional[str] = None,
     ) -> None:
-        ref = self._writer.db.collection("bridges").document(self._bridge_id)
+        self.write_with_device(
+            bridge_id=self._bridge_id,
+            device_id=self._device_id,
+            status=status,
+            device_connected=device_connected,
+            last_sync_at=last_sync_at,
+            last_error=last_error,
+        )
+
+    def write_with_device(
+        self,
+        *,
+        bridge_id: str,
+        device_id: str,
+        status: str,
+        device_connected: bool,
+        last_sync_at: Optional[datetime],
+        last_error: Optional[str] = None,
+    ) -> None:
+        ref = self._writer.db.collection("bridges").document(bridge_id)
         ref.set(
             {
-                "bridgeId": self._bridge_id,
-                "deviceId": self._device_id,
+                "bridgeId": bridge_id,
+                "deviceId": device_id,
                 "status": status,
                 "deviceConnected": device_connected,
                 "lastSyncAt": last_sync_at,

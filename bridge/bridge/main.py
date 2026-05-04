@@ -1,13 +1,21 @@
 """Bridge orchestrator.
 
-Outer loop: stay connected to the device, recover from drops.
-Inner loop (while connected):
-    1. Pull new punches from device → Firestore
-    2. Write heartbeat
-    3. Sleep poll_interval
+Outer loop:
+  1. Fetch device target from Firestore (devices/{targetDeviceId})
+  2. If no IP set yet, write an "awaiting_config" heartbeat and wait
+  3. Connect to the device with backoff
+  4. Run the sync inner loop until the device drops or we shut down
 
-On any error inside the inner loop, log + write a degraded heartbeat,
-disconnect, and let the outer loop reconnect with backoff.
+Inner loop (while connected):
+  - Pull new punches from device → Firestore (idempotent)
+  - Drain any queued bridge_commands and execute them
+  - Stamp the device record's last_sync_at
+  - Heartbeat
+  - Sleep poll_interval_s
+
+Config changes (HR edits the device IP via the Flutter app) propagate
+on the next reconnect cycle, since `RemoteConfigStore.fetch()` runs
+at the top of every outer iteration.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from .config import BridgeConfig
 from .device import DeviceConnection, connect_with_backoff
 from .firestore_writer import FirestoreWriter
 from .heartbeat import HeartbeatPublisher
+from .remote_config import DeviceTarget, RemoteConfigStore
 from .state import BridgeState
 
 log = logging.getLogger(__name__)
@@ -57,7 +66,8 @@ def main() -> int:
         cfg.firebase_credentials_path,
         cfg.firebase_project_id,
     )
-    heartbeat = HeartbeatPublisher(writer, cfg.bridge_id, cfg.device_id)
+    remote = RemoteConfigStore(writer.db, cfg.bridge_id)
+    heartbeat = HeartbeatPublisher(writer, cfg.bridge_id, cfg.bridge_id)
     stop = _StopFlag()
     stop.install()
 
@@ -68,47 +78,78 @@ def main() -> int:
     cmd_listener = BridgeCommandListener(writer.db, cfg.bridge_id, cmd_queue)
     cmd_listener.start()
 
-    def device_factory() -> DeviceConnection:
-        return DeviceConnection(
-            ip=cfg.device_ip,
-            port=cfg.device_port,
-            password=cfg.device_password,
-            timeout=cfg.device_timeout,
-            force_udp=cfg.device_force_udp,
-        )
-
     last_sync_at: Optional[datetime] = None
     last_error: Optional[str] = None
 
     while not stop.stop:
+        target = remote.fetch()
+        if target is None:
+            # Device record exists but the IP is still the placeholder.
+            # Idle, heartbeat, retry — HR will set the IP from the app.
+            _safe_heartbeat(
+                heartbeat,
+                bridge_id=cfg.bridge_id,
+                device_id=cfg.bridge_id,
+                status="awaiting_config",
+                device_connected=False,
+                last_sync_at=last_sync_at,
+                last_error="Set the device IP from the Flutter app "
+                "under Settings → Integrations → Devices.",
+            )
+            _interruptible_sleep(15, stop)
+            continue
+
         device = connect_with_backoff(
-            device_factory,
+            lambda t=target: DeviceConnection(
+                ip=t.ip,
+                port=t.port,
+                password=t.password,
+                timeout=t.timeout_s,
+                force_udp=False,
+            ),
             stop_check=lambda: stop.stop,
         )
         if device is None:
             break  # shutdown requested while still trying to connect
 
         executor = CommandExecutor(
-            device, writer, state, cfg.bridge_id, cfg.device_id,
+            device, writer, state, cfg.bridge_id, target.device_id,
         )
 
         _safe_heartbeat(
             heartbeat,
+            bridge_id=cfg.bridge_id,
+            device_id=target.device_id,
             status="online",
             device_connected=True,
             last_sync_at=last_sync_at,
             last_error=None,
         )
 
+        # Track which target we're currently connected to. If the
+        # device record changes while we're running, we drop and
+        # reconnect on the next iteration.
+        connected_target = target
+
         while not stop.stop:
             try:
+                # Pick up config changes between iterations.
+                latest = remote.fetch()
+                if latest is None or latest != connected_target:
+                    log.info(
+                        "device config changed (or was cleared); "
+                        "reconnecting"
+                    )
+                    device.disconnect()
+                    break
+
                 high_water = state.get_high_water()
                 new_records, new_high_water = _read_new_punches(
                     device, high_water
                 )
                 if new_records:
                     n = writer.write_punches(
-                        device_id=cfg.device_id,
+                        device_id=target.device_id,
                         bridge_id=cfg.bridge_id,
                         records=new_records,
                     )
@@ -119,10 +160,7 @@ def main() -> int:
                         new_high_water,
                     )
 
-                # Drain any queued commands the listener stashed
-                # while we were polling. Each command runs against
-                # the same device connection, so they're naturally
-                # serialized.
+                # Drain any queued commands.
                 while True:
                     try:
                         ref, data = cmd_queue.get_nowait()
@@ -135,8 +173,11 @@ def main() -> int:
 
                 last_sync_at = datetime.now(timezone.utc)
                 last_error = None
+                remote.stamp_last_sync(target.device_id)
                 _safe_heartbeat(
                     heartbeat,
+                    bridge_id=cfg.bridge_id,
+                    device_id=target.device_id,
                     status="online",
                     device_connected=True,
                     last_sync_at=last_sync_at,
@@ -147,6 +188,8 @@ def main() -> int:
                 log.exception("sync iteration failed: %s", e)
                 _safe_heartbeat(
                     heartbeat,
+                    bridge_id=cfg.bridge_id,
+                    device_id=target.device_id,
                     status="degraded",
                     device_connected=False,
                     last_sync_at=last_sync_at,
@@ -164,6 +207,8 @@ def main() -> int:
 
     _safe_heartbeat(
         heartbeat,
+        bridge_id=cfg.bridge_id,
+        device_id=cfg.bridge_id,
         status="offline",
         device_connected=False,
         last_sync_at=last_sync_at,
@@ -174,13 +219,6 @@ def main() -> int:
 
 
 def _read_new_punches(device: DeviceConnection, high_water: int):
-    """Pull all attendance records, return only those whose device-uid
-    is greater than the high-water mark, plus the new high-water.
-
-    Why uid not timestamp: ZK records have a monotonically-increasing
-    `uid` per record. Using uid is unambiguous even when two punches
-    fall on the same second.
-    """
     with device.disable_during():
         records = device.get_attendance()
     if not records:
@@ -195,16 +233,17 @@ def _read_new_punches(device: DeviceConnection, high_water: int):
 def _safe_heartbeat(
     heartbeat: HeartbeatPublisher,
     *,
+    bridge_id: str,
+    device_id: str,
     status: str,
     device_connected: bool,
     last_sync_at: Optional[datetime],
     last_error: Optional[str],
 ) -> None:
-    """A failed heartbeat should never crash the sync loop — log it
-    and move on. The next iteration will retry.
-    """
     try:
-        heartbeat.write(
+        heartbeat.write_with_device(
+            bridge_id=bridge_id,
+            device_id=device_id,
             status=status,
             device_connected=device_connected,
             last_sync_at=last_sync_at,

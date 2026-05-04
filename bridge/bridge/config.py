@@ -2,6 +2,11 @@
 
 Loaded once at startup; missing required vars fail fast so a
 misconfiguration surfaces immediately rather than at first device read.
+
+The bridge no longer reads device IP / port / comm-key from the
+environment — those live in Firestore (`devices/{targetDeviceId}`)
+so HR can edit them from the Flutter app without touching the
+device PC. See `remote_config.py`.
 """
 
 from __future__ import annotations
@@ -41,21 +46,12 @@ class BridgeConfig:
     firebase_credentials_path: Path
     firebase_project_id: str
     bridge_id: str
-    device_ip: str
-    device_port: int
-    device_password: int
-    device_timeout: int
-    device_force_udp: bool
-    device_id: str
     poll_interval_s: int
     heartbeat_interval_s: int
     state_db_path: Path
 
     @classmethod
     def load(cls) -> "BridgeConfig":
-        # Load .env from the runtime dir explicitly; otherwise the
-        # frozen exe wouldn't find it when launched from C:\Windows
-        # (e.g. by Task Scheduler running as SYSTEM).
         env_path = _runtime_dir() / ".env"
         if env_path.is_file():
             load_dotenv(env_path)
@@ -81,13 +77,6 @@ class BridgeConfig:
             firebase_credentials_path=creds,
             firebase_project_id=req("FIREBASE_PROJECT_ID"),
             bridge_id=req("BRIDGE_ID"),
-            device_ip=req("DEVICE_IP"),
-            device_port=int(os.environ.get("DEVICE_PORT", "4370")),
-            device_password=int(os.environ.get("DEVICE_PASSWORD", "0")),
-            device_timeout=int(os.environ.get("DEVICE_TIMEOUT", "10")),
-            device_force_udp=os.environ.get("DEVICE_FORCE_UDP", "false").lower()
-            == "true",
-            device_id=req("DEVICE_ID"),
             poll_interval_s=int(os.environ.get("POLL_INTERVAL_SECONDS", "30")),
             heartbeat_interval_s=int(
                 os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30")
