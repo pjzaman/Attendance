@@ -1,14 +1,14 @@
-# Apon Bridge — diagnostic script
+# Apon Bridge - diagnostic script
 #
 # Run as Administrator on the device PC. Captures everything relevant
 # to debugging "the bridge isn't writing to Firestore" (install dir
-# contents, sanitized .env, scheduled task state, 20s of foreground
+# contents, sanitized .env, scheduled task state, 25s of foreground
 # bridge output) into a single log file on the Desktop. Send the log
 # back to the dev session for analysis.
 #
 # Secrets are redacted: the firebase-sa.json's private_key is never
-# printed; only the safe identifying fields (project_id, client_email,
-# type) are.
+# printed; only safe identifying fields (project_id, client_email)
+# are.
 
 #Requires -RunAsAdministrator
 
@@ -24,13 +24,13 @@ function Section([string]$name) {
     Write-Host "========== $name ==========" -ForegroundColor Cyan
 }
 
-Write-Host "Apon Bridge diagnostic — $(Get-Date)"
+Write-Host "Apon Bridge diagnostic - $(Get-Date)"
 Write-Host "Host:        $env:COMPUTERNAME"
 Write-Host "User:        $env:USERNAME"
 Write-Host "PowerShell:  $($PSVersionTable.PSVersion)"
 Write-Host "Windows:     $((Get-CimInstance Win32_OperatingSystem).Caption)"
 
-# ── Install directory ────────────────────────────────────────────
+# Install directory
 Section "Install directory"
 if (Test-Path $InstallDir) {
     Write-Host "Path exists: $InstallDir"
@@ -41,7 +41,7 @@ if (Test-Path $InstallDir) {
     Write-Host "Path does NOT exist: $InstallDir" -ForegroundColor Red
 }
 
-# ── .env (sanitized) ─────────────────────────────────────────────
+# .env (sanitized)
 Section ".env (secrets redacted)"
 $EnvFile = "$InstallDir\.env"
 if (Test-Path $EnvFile) {
@@ -68,7 +68,7 @@ if (Test-Path $EnvFile) {
     Write-Host "ENV file does NOT exist: $EnvFile" -ForegroundColor Red
 }
 
-# ── firebase-sa.json (private key never printed) ─────────────────
+# firebase-sa.json (private key never printed)
 Section "firebase-sa.json (private key not printed)"
 $SaFile = "$InstallDir\firebase-sa.json"
 if (Test-Path $SaFile) {
@@ -90,7 +90,7 @@ if (Test-Path $SaFile) {
     Write-Host "File does NOT exist: $SaFile" -ForegroundColor Red
 }
 
-# ── Scheduled task ───────────────────────────────────────────────
+# Scheduled task
 Section "Scheduled task"
 $task = Get-ScheduledTask -TaskName ApponBridge -ErrorAction SilentlyContinue
 if ($task) {
@@ -104,21 +104,25 @@ if ($task) {
     Write-Host "Task 'ApponBridge' does NOT exist" -ForegroundColor Red
 }
 
-# ── Network reachability ─────────────────────────────────────────
+# Network reachability
 Section "Network reachability"
-foreach ($host in @('firestore.googleapis.com','firebase.google.com')) {
+$endpoints = @('firestore.googleapis.com','firebase.google.com')
+foreach ($endpoint in $endpoints) {
     try {
-        $r = Test-NetConnection -ComputerName $host -Port 443 `
+        $r = Test-NetConnection -ComputerName $endpoint -Port 443 `
                                 -InformationLevel Quiet `
                                 -WarningAction SilentlyContinue
-        $status = if ($r) { 'reachable' } else { 'NOT reachable' }
-        Write-Host "${host}:443 — $status"
+        if ($r) {
+            Write-Host "$endpoint`:443 - reachable"
+        } else {
+            Write-Host "$endpoint`:443 - NOT reachable"
+        }
     } catch {
-        Write-Host "${host}:443 — error: $($_.Exception.Message)"
+        Write-Host "$endpoint`:443 - error: $($_.Exception.Message)"
     }
 }
 
-# ── Foreground bridge run ────────────────────────────────────────
+# Foreground bridge run
 Section "Bridge foreground run (up to 25s)"
 $BridgeExe = "$InstallDir\apon-bridge.exe"
 if (Test-Path $BridgeExe) {
@@ -139,7 +143,7 @@ if (Test-Path $BridgeExe) {
         $exited = $proc.WaitForExit(25000)
         if (-not $exited) {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            Write-Host "[killed after 25s — bridge was still running, which is normal]"
+            Write-Host "[killed after 25s - bridge was still running, which is normal]"
         } else {
             Write-Host "[bridge exited with code $($proc.ExitCode) within 25s]"
         }
@@ -157,7 +161,7 @@ if (Test-Path $BridgeExe) {
     Write-Host "Bridge exe does NOT exist at $BridgeExe" -ForegroundColor Red
 }
 
-# ── Restart scheduled task ───────────────────────────────────────
+# Restart scheduled task
 Section "Restarting scheduled task"
 try {
     Start-ScheduledTask -TaskName ApponBridge -ErrorAction Stop
