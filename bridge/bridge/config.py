@@ -11,6 +11,7 @@ device PC. See `remote_config.py`.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 from dataclasses import dataclass
@@ -54,7 +55,18 @@ class BridgeConfig:
     def load(cls) -> "BridgeConfig":
         env_path = _runtime_dir() / ".env"
         if env_path.is_file():
-            load_dotenv(env_path)
+            # Read with utf-8-sig so a leading BOM (which Windows
+            # PowerShell 5.1 writes by default with `Out-File -Encoding
+            # utf8`) gets stripped — otherwise python-dotenv treats it
+            # as part of the first variable name and the entire .env
+            # appears blank to os.environ.get().
+            try:
+                text = env_path.read_text(encoding="utf-8-sig")
+                load_dotenv(stream=io.StringIO(text))
+            except UnicodeDecodeError:
+                # Fallback: maybe it's some other encoding. Let
+                # python-dotenv try its own decoding heuristics.
+                load_dotenv(env_path)
 
         def req(name: str) -> str:
             v = os.environ.get(name)

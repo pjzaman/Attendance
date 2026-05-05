@@ -89,24 +89,36 @@ Copy-Item -Force $SaPath "$InstallDir\firebase-sa.json"
 # (operator may have customized poll interval, etc.) leave it alone
 # and just refresh the BRIDGE_ID line.
 $EnvPath = "$InstallDir\.env"
+# Use UTF-8 *without* BOM. PS 5.1's `Out-File -Encoding utf8` writes a
+# BOM, which python-dotenv treats as part of the first variable name
+# ("﻿GOOGLE_APPLICATION_CREDENTIALS") — so the bridge bails on
+# startup with "Missing required env var" even though the file looks
+# correct in any text editor.
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+
 if (Test-Path $EnvPath) {
     Write-Host "  Keeping existing .env (only updating BRIDGE_ID)" -ForegroundColor Yellow
+    # Read with utf-8-sig-equivalent (strip leading BOM if present)
     $existing = Get-Content $EnvPath -Raw
+    if ($existing.Length -gt 0 -and $existing[0] -eq [char]0xFEFF) {
+        $existing = $existing.Substring(1)
+    }
     if ($existing -match '(?m)^BRIDGE_ID=.*$') {
         $existing = $existing -replace '(?m)^BRIDGE_ID=.*$', "BRIDGE_ID=$BridgeId"
     } else {
         $existing += "`nBRIDGE_ID=$BridgeId`n"
     }
-    $existing | Out-File -FilePath $EnvPath -Encoding utf8 -NoNewline
+    [System.IO.File]::WriteAllText($EnvPath, $existing, $utf8NoBom)
 } else {
-    @"
+    $newEnv = @"
 GOOGLE_APPLICATION_CREDENTIALS=./firebase-sa.json
 FIREBASE_PROJECT_ID=$ProjectId
 BRIDGE_ID=$BridgeId
 POLL_INTERVAL_SECONDS=30
 HEARTBEAT_INTERVAL_SECONDS=300
 STATE_DB_PATH=./bridge_state.sqlite
-"@ | Out-File -FilePath $EnvPath -Encoding utf8
+"@
+    [System.IO.File]::WriteAllText($EnvPath, $newEnv, $utf8NoBom)
 }
 
 # ── 6. Register the scheduled task ───────────────────────────────
