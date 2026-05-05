@@ -82,6 +82,8 @@ class CommandExecutor:
     def _dispatch(self, action: str, params: Dict[str, Any]) -> Any:
         if action == "manual_sync":
             return self._manual_sync()
+        if action == "sync_users":
+            return self.sync_users()
         if action == "clear_log":
             return self._clear_log()
         if action == "sync_time":
@@ -91,6 +93,20 @@ class CommandExecutor:
         if action == "delete_user":
             return self._delete_user(params)
         raise ValueError(f"Unknown action: {action!r}")
+
+    def sync_users(self) -> Dict[str, Any]:
+        """Pull the device's enrolled-user list and mirror it to
+        employees/{user_id} in Firestore. Public (vs the leading-
+        underscore action handlers) so main.py can invoke it directly
+        when a fresh connection comes up — no need to round-trip
+        through a queued bridge_command on every restart.
+        """
+        if self._device._conn is None:
+            raise RuntimeError("device not connected")
+        with self._device.disable_during():
+            users = self._device._conn.get_users()
+        n = self._writer.write_employees(users=users)
+        return {"synced": n}
 
     # ─── Action handlers ─────────────────────────────────────────
 

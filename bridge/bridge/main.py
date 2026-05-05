@@ -155,6 +155,16 @@ def main() -> int:
             device, writer, state, cfg.bridge_id, target.device_id,
         )
 
+        # Auto-sync users on every fresh connect. Firestore writes are
+        # batched (one round-trip regardless of headcount), so even
+        # large user lists land cheap. No-op for installs whose users
+        # haven't changed — set() with the same data is idempotent.
+        try:
+            result = executor.sync_users()
+            log.info("synced %d user(s) on connect", result.get("synced", 0))
+        except Exception as e:
+            log.warning("user sync on connect failed (non-fatal): %s", e)
+
         # State-transition heartbeat: connect → online.
         hb(
             status="online",

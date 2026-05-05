@@ -51,6 +51,39 @@ class FirestoreWriter:
     def db(self):
         return self._db
 
+    def write_employees(self, *, users: Iterable) -> int:
+        """Batch-write pyzk User objects to employees/{user_id}.
+
+        Doc shape matches lib/models/employee.dart's `fromFirestore`:
+        camelCase fields, doc_id == device user_id.
+        """
+        users = list(users)
+        if not users:
+            return 0
+        batch = self._db.batch()
+        now = datetime.now(timezone.utc).isoformat()
+        written = 0
+        for u in users:
+            user_id = str(getattr(u, "user_id", "") or "").strip()
+            if not user_id:
+                # Devices sometimes have rows with empty user_id —
+                # internal slots, blank enrollments. Skip them.
+                continue
+            ref = self._db.collection("employees").document(user_id)
+            card_raw = getattr(u, "card", 0) or 0
+            card_str = str(card_raw) if card_raw not in (0, "0") else ""
+            batch.set(ref, {
+                "uid": int(getattr(u, "uid", 0) or 0),
+                "name": str(getattr(u, "name", "") or ""),
+                "privilege": int(getattr(u, "privilege", 0) or 0),
+                "cardNo": card_str,
+                "groupId": str(getattr(u, "group_id", "") or ""),
+                "updatedAt": now,
+            })
+            written += 1
+        batch.commit()
+        return written
+
     def write_punches(
         self,
         *,

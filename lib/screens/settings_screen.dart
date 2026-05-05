@@ -2973,6 +2973,13 @@ class _BridgeRowState extends State<_BridgeRow> {
                     onPressed: () => _send('manual_sync'),
                   ),
                   _BridgeActionButton(
+                    icon: Icons.people_outline,
+                    label: 'Sync users',
+                    busy: _runningAction == 'sync_users',
+                    enabled: !stale && _runningAction == null,
+                    onPressed: () => _send('sync_users'),
+                  ),
+                  _BridgeActionButton(
                     icon: Icons.access_time,
                     label: 'Sync time',
                     busy: _runningAction == 'sync_time',
